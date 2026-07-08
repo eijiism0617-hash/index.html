@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>手書きノート — Inkwell</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+:root {
+  --ink: #1a2332;
+  --ink-soft: #4a5568;
+  --paper: #fbfaf7;
+  --panel: #f2efe8;
+  --panel-edge: #ddd8cc;
+  --accent: #2d6a5f;
+  --accent-soft: #d9e7e3;
+  --accent-ink: #1c433c;
+  --danger: #a4453a;
+  --amber: #c08a2d;
+  --shadow: rgba(26, 35, 50, 0.08);
+  --font-ui: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  --font-display: "Georgia", "Hiragino Mincho ProN", serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; overflow: hidden; font-family: var(--font-ui); color: var(--ink); background: var(--panel); }
+.app { display: flex; height: 100vh; }
+
+/* Sidebar */
+.sidebar { width: 300px; min-width: 300px; background: var(--panel); border-right: 1px solid var(--panel-edge); display: flex; flex-direction: column; transition: margin-left 0.25s ease; }
+.sidebar.collapsed { margin-left: -300px; }
+.brand { padding: 20px 22px 16px; display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--panel-edge); }
+.brand h1 { font-family: var(--font-display); font-size: 22px; font-weight: 600; letter-spacing: 0.3px; }
+.brand span { font-size: 11px; color: var(--ink-soft); letter-spacing: 1px; text-transform: uppercase; }
+.search-wrap { padding: 14px 16px; }
+.search-box { display: flex; align-items: center; gap: 8px; background: var(--paper); border: 1px solid var(--panel-edge); border-radius: 10px; padding: 9px 12px; }
+.search-box input { border: none; background: none; outline: none; flex: 1; font-size: 14px; font-family: var(--font-ui); color: var(--ink); }
+.search-box svg { width: 16px; height: 16px; stroke: var(--ink-soft); fill: none; }
+.section-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-soft); padding: 6px 22px; display: flex; justify-content: space-between; align-items: center; }
+.section-label button { border: none; background: none; color: var(--accent); cursor: pointer; font-size: 18px; line-height: 1; padding: 0 4px; }
+.folders { padding: 4px 12px; }
+.folder { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; cursor: pointer; font-size: 14px; transition: background 0.15s; }
+.folder:hover { background: rgba(0,0,0,0.03); }
+.folder.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
+.folder .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+.folder .count { margin-left: auto; font-size: 12px; color: var(--ink-soft); }
+.notes-list { flex: 1; overflow-y: auto; padding: 4px 12px 16px; }
+.note-card { padding: 12px 14px; border-radius: 10px; cursor: pointer; margin-bottom: 4px; border: 1px solid transparent; transition: all 0.15s; }
+.note-card:hover { background: var(--paper); border-color: var(--panel-edge); }
+.note-card.active { background: var(--paper); border-color: var(--accent); }
+.note-card .title { font-size: 14px; font-weight: 500; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-card .meta { font-size: 12px; color: var(--ink-soft); display: flex; gap: 8px; align-items: center; }
+.note-card .meta .pages { color: var(--accent); }
+.note-card .meta .mic { color: var(--danger); }
+.empty-hint { text-align: center; color: var(--ink-soft); font-size: 13px; padding: 40px 20px; line-height: 1.7; }
+
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; background: var(--panel); min-width: 0; }
+.topbar { display: flex; align-items: center; gap: 6px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--panel-edge); flex-wrap: wrap; }
+.tool-btn { display: flex; align-items: center; gap: 6px; border: 1px solid var(--panel-edge); background: var(--paper); border-radius: 9px; padding: 8px 11px; cursor: pointer; font-size: 13px; font-family: var(--font-ui); color: var(--ink); transition: all 0.15s; white-space: nowrap; }
+.tool-btn:hover { border-color: var(--accent); color: var(--accent-ink); }
+.tool-btn:active { transform: scale(0.97); }
+.tool-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; }
+.tool-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.tool-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.tool-btn.rec-active { background: var(--danger); color: #fff; border-color: var(--danger); }
+.tool-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.divider-v { width: 1px; height: 24px; background: var(--panel-edge); margin: 0 4px; }
+.colors { display: flex; gap: 6px; align-items: center; }
+.swatch { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform 0.12s; }
+.swatch:hover { transform: scale(1.12); }
+.swatch.active { border-color: var(--ink); box-shadow: 0 0 0 2px var(--paper); }
+.pen-sizes { display: flex; gap: 4px; align-items: center; }
+.pen-size { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--panel-edge); background: var(--paper); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.pen-size.active { border-color: var(--accent); background: var(--accent-soft); }
+.pen-size .ball { border-radius: 50%; background: var(--ink); }
+.spacer { flex: 1; }
+
+/* Canvas */
+.canvas-stage { flex: 1; overflow: auto; display: flex; justify-content: center; padding: 28px; background: var(--panel); position: relative; }
+.paper-sheet { box-shadow: 0 4px 24px var(--shadow); border-radius: 4px; position: relative; align-self: flex-start; }
+canvas.draw { display: block; border-radius: 4px; touch-action: none; }
+.paper-sheet.select-mode canvas.draw { cursor: crosshair; }
+.sel-rect { position: absolute; border: 2px dashed var(--accent); background: rgba(45,106,95,0.1); pointer-events: none; display: none; z-index: 5; }
+
+/* Zoom overlay (focus draw) */
+.zoom-overlay { position: fixed; inset: 0; background: rgba(26,35,50,0.55); z-index: 300; display: none; flex-direction: column; }
+.zoom-overlay.show { display: flex; }
+.zoom-head { display: flex; align-items: center; gap: 8px; padding: 12px 18px; background: var(--panel); flex-wrap: wrap; }
+.zoom-body { flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 20px; }
+canvas.zoomcanvas { background: var(--paper); box-shadow: 0 8px 40px rgba(0,0,0,0.4); border-radius: 6px; touch-action: none; cursor: crosshair; }
+
+/* Pagebar */
+.pagebar { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px; background: var(--panel); border-top: 1px solid var(--panel-edge); flex-wrap: wrap; }
+.pagebar button { border: 1px solid var(--panel-edge); background: var(--paper); border-radius: 8px; min-width: 34px; height: 34px; padding: 0 8px; cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; color: var(--ink); gap: 4px; }
+.pagebar button:hover { border-color: var(--accent); }
+.pagebar button:disabled { opacity: 0.35; cursor: not-allowed; }
+.pagebar .page-info { font-size: 13px; color: var(--ink-soft); min-width: 76px; text-align: center; }
+.zoom-readout { font-size: 12px; color: var(--ink-soft); min-width: 44px; text-align: center; }
+
+/* Audio bar */
+.audio-bar { display: none; align-items: center; gap: 12px; padding: 8px 16px; background: var(--accent-soft); border-top: 1px solid var(--panel-edge); font-size: 13px; color: var(--accent-ink); }
+.audio-bar.show { display: flex; }
+.audio-bar audio { height: 32px; flex: 1; max-width: 340px; }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* Empty */
+.no-note { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--ink-soft); text-align: center; padding: 40px; }
+.no-note svg { width: 56px; height: 56px; stroke: var(--panel-edge); fill: none; margin-bottom: 16px; }
+.no-note h2 { font-family: var(--font-display); font-size: 20px; color: var(--ink); margin-bottom: 8px; font-weight: 600; }
+.no-note p { font-size: 14px; line-height: 1.7; max-width: 280px; }
+
+/* Modal / toast */
+.overlay { position: fixed; inset: 0; background: rgba(26,35,50,0.4); display: none; align-items: center; justify-content: center; z-index: 400; }
+.overlay.show { display: flex; }
+.modal { background: var(--paper); border-radius: 16px; padding: 26px; width: 440px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+.modal h3 { font-family: var(--font-display); font-size: 19px; margin-bottom: 8px; }
+.modal p { font-size: 13px; color: var(--ink-soft); line-height: 1.6; margin-bottom: 16px; }
+.modal .ocr-result { background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 10px; padding: 14px; font-size: 14px; line-height: 1.8; max-height: 240px; overflow-y: auto; white-space: pre-wrap; margin-bottom: 16px; min-height: 60px; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.modal-actions button { padding: 9px 18px; border-radius: 9px; cursor: pointer; font-size: 14px; font-family: var(--font-ui); border: 1px solid var(--panel-edge); background: var(--paper); color: var(--ink); }
+.modal-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.bg-swatches { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.bg-swatch { width: 46px; height: 46px; border-radius: 10px; cursor: pointer; border: 2px solid var(--panel-edge); position: relative; }
+.bg-swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.bg-swatch.transparent { background-image: linear-gradient(45deg,#ccc 25%,transparent 25%),linear-gradient(-45deg,#ccc 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#ccc 75%),linear-gradient(-45deg,transparent 75%,#ccc 75%); background-size: 12px 12px; background-position: 0 0,0 6px,6px -6px,-6px 0; }
+.field-label { font-size: 12px; color: var(--ink-soft); margin-bottom: 8px; letter-spacing: 0.5px; }
+.toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff; padding: 12px 22px; border-radius: 12px; font-size: 14px; opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 500; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 700px) { .sidebar { position: absolute; z-index: 50; height: 100%; box-shadow: 4px 0 24px var(--shadow); } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><h1>Inkwell</h1><span>手書きノート</span></div>
+    <div class="search-wrap">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input type="text" id="searchInput" placeholder="ノートを検索…">
+      </div>
+    </div>
+    <div class="section-label">フォルダー <button id="addFolderBtn">＋</button></div>
+    <div class="folders" id="folders"></div>
+    <div class="section-label">ノート</div>
+    <div class="notes-list" id="notesList"></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <button class="tool-btn" id="toggleSidebar" title="サイドバー"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="tool-btn" id="newNoteBtn"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新規</button>
+      <div class="divider-v"></div>
+      <div class="colors" id="colors"></div>
+      <div class="divider-v"></div>
+      <div class="pen-sizes" id="penSizes"></div>
+      <button class="tool-btn" id="highlightBtn" title="ハイライト背景"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M4 20h16M6 16l8-8 4 4-8 8H6z"/></svg></button>
+      <button class="tool-btn" id="eraserBtn" title="消しゴム"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M4 20h10M7 16L4 13l9-9 6 6-6 6H7z"/></svg></button>
+      <div class="divider-v"></div>
+      <button class="tool-btn" id="focusBtn" title="集中ズーム（範囲拡大）"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M9 3H5a2 2 0 00-2 2v4M15 3h4a2 2 0 012 2v4M9 21H5a2 2 0 01-2-2v-4M15 21h4a2 2 0 002-2v-4"/></svg>集中</button>
+      <button class="tool-btn" id="imgBtn" title="画像を挿入"><svg viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
+      <button class="tool-btn" id="recBtn" title="録音"><svg viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0M12 17v4"/></svg>録音</button>
+      <div class="spacer"></div>
+      <button class="tool-btn" id="bgBtn" title="紙の背景色"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M12 2l7 7-7 11L5 9z"/></svg></button>
+      <button class="tool-btn" id="undoBtn" title="戻す"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5 5 5 0 01-5 5H9"/></svg></button>
+      <button class="tool-btn" id="ocrBtn" title="文字認識">OCR</button>
+      <button class="tool-btn" id="exportBtn" title="書き出し"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+      <button class="tool-btn danger" id="deleteNoteBtn" title="削除"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+    </div>
+
+    <div class="canvas-stage" id="stage">
+      <div class="no-note" id="noNote">
+        <svg viewBox="0 0 24 24" stroke-width="1.5"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        <h2>ノートを選ぶか、新しく作成</h2>
+        <p>左のフォルダーからノートを開くか、「新規」で手書きを始めましょう。</p>
+      </div>
+      <div class="paper-sheet" id="sheet" style="display:none">
+        <canvas class="draw" id="canvas"></canvas>
+        <div class="sel-rect" id="selRect"></div>
+      </div>
+    </div>
+
+    <div class="audio-bar" id="audioBar"></div>
+
+    <div class="pagebar" id="pagebar" style="display:none">
+      <button id="prevPage" title="前のページ">‹</button>
+      <span class="page-info" id="pageInfo">1 / 1</span>
+      <button id="nextPage" title="次のページ">›</button>
+      <div class="divider-v"></div>
+      <button id="addPage" title="ページ追加">＋ ページ</button>
+      <button id="delPage" class="danger" title="ページ削除">🗑</button>
+      <div class="divider-v"></div>
+      <button id="zoomOut" title="縮小">－</button>
+      <span class="zoom-readout" id="zoomReadout">100%</span>
+      <button id="zoomIn" title="拡大">＋</button>
+      <button id="zoomReset" title="リセット">⟲</button>
+    </div>
+  </main>
+</div>
+
+<!-- Focus zoom overlay -->
+<div class="zoom-overlay" id="zoomOverlay">
+  <div class="zoom-head">
+    <div class="colors" id="zoomColors"></div>
+    <div class="divider-v"></div>
+    <div class="pen-sizes" id="zoomSizes"></div>
+    <button class="tool-btn" id="zoomEraser" title="消しゴム"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M4 20h10M7 16L4 13l9-9 6 6-6 6H7z"/></svg></button>
+    <button class="tool-btn" id="zoomUndo" title="戻す"><svg viewBox="0 0 24 24" stroke-width="2"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5 5 5 0 01-5 5H9"/></svg></button>
+    <div class="spacer"></div>
+    <button class="tool-btn danger" id="zoomCancel">キャンセル</button>
+    <button class="tool-btn active" id="zoomDone">この範囲に反映</button>
+  </div>
+  <div class="zoom-body"><canvas class="zoomcanvas" id="zoomCanvas"></canvas></div>
+</div>
+
+<!-- Background color modal -->
+<div class="overlay" id="bgModal">
+  <div class="modal">
+    <h3>紙の背景色</h3>
+    <p>このページ全体の紙の色を選びます。書き出し時にも反映されます。</p>
+    <div class="bg-swatches" id="bgSwatches"></div>
+    <div class="modal-actions">
+      <button id="bgCloseBtn">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Export modal -->
+<div class="overlay" id="exportModal">
+  <div class="modal">
+    <h3>書き出し</h3>
+    <p>書き出したファイルは「ファイル」アプリから iCloud Drive に保存できます。</p>
+    <div class="field-label">背景の扱い</div>
+    <div class="bg-swatches" style="margin-bottom:18px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer"><input type="radio" name="expbg" value="paper" checked> 紙の色</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer"><input type="radio" name="expbg" value="transparent"> 透明（PNGのみ）</label>
+    </div>
+    <div class="modal-actions">
+      <button id="exportImgBtn">画像 (PNG)</button>
+      <button id="exportPdfBtn" class="primary">PDF（全ページ）</button>
+    </div>
+  </div>
+</div>
+
+<!-- OCR modal -->
+<div class="overlay" id="ocrModal">
+  <div class="modal">
+    <h3>手書き文字認識</h3>
+    <p>現在のページの手書き文字をテキストに変換します。</p>
+    <div class="ocr-result" id="ocrResult">「認識開始」を押してください。</div>
+    <div class="modal-actions">
+      <button id="ocrCloseBtn">閉じる</button>
+      <button id="ocrCopyBtn">コピー</button>
+      <button id="ocrRunBtn" class="primary">認識開始</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="imgInput" accept="image/*" style="display:none">
+<div class="toast" id="toast"></div>
+
+<script>
+const PAGE_W = 900, PAGE_H = 1200;
+let db;
+const openDB = () => new Promise((res, rej) => {
+  const r = indexedDB.open('InkwellDB2', 1);
+  r.onupgradeneeded = e => {
+    const d = e.target.result;
+    if (!d.objectStoreNames.contains('folders')) d.createObjectStore('folders', { keyPath: 'id' });
+    if (!d.objectStoreNames.contains('notes')) d.createObjectStore('notes', { keyPath: 'id' });
+  };
+  r.onsuccess = () => { db = r.result; res(); };
+  r.onerror = () => rej(r.error);
+});
+const dbAll = store => new Promise(res => { const rq = db.transaction([store],'readonly').objectStore(store).getAll(); rq.onsuccess = () => res(rq.result); });
+const dbPut = (store, val) => new Promise(res => { const t = db.transaction([store],'readwrite'); t.objectStore(store).put(val); t.oncomplete = res; });
+const dbDel = (store, id) => new Promise(res => { const t = db.transaction([store],'readwrite'); t.objectStore(store).delete(id); t.oncomplete = res; });
+
+const S = {
+  folders: [], notes: [], curFolder: null, curNote: null, curPage: 0,
+  color: '#1a2332', size: 2.5, mode: 'pen', search: '', zoom: 1
+};
+const COLORS = ['#1a2332', '#a4453a', '#2f5fa8', '#2d6a5f', '#c08a2d', '#7a4f9e'];
+const SIZES = [{ v: 1.5 }, { v: 2.5 }, { v: 5 }];
+const PAPER_COLORS = ['#fbfaf7', '#fffef0', '#eef4f8', '#f3f0f7', '#f0f5ef', '#faf0f0', '#1f2733'];
+const HIGHLIGHT = 'rgba(255, 214, 90, 0.5)';
+
+const $ = id => document.getElementById(id);
+const canvas = $('canvas'), ctx = canvas.getContext('2d');
+const imgCache = {};
+
+function toast(m) { const t = $('toast'); t.innerHTML = m; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2200); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ---- palettes ---- */
+function buildColors(containerId, onPick) {
+  const el = $(containerId); el.innerHTML = '';
+  COLORS.forEach((c, i) => {
+    const s = document.createElement('div');
+    s.className = 'swatch' + (i === 0 ? ' active' : '');
+    s.style.background = c;
+    s.onclick = () => { el.querySelectorAll('.swatch').forEach(x => x.classList.remove('active')); s.classList.add('active'); onPick(c); };
+    el.appendChild(s);
+  });
+}
+function buildSizes(containerId, onPick, activeIdx=1) {
+  const el = $(containerId); el.innerHTML = '';
+  SIZES.forEach((sz, i) => {
+    const b = document.createElement('div');
+    b.className = 'pen-size' + (i === activeIdx ? ' active' : '');
+    const ball = document.createElement('div'); ball.className = 'ball';
+    ball.style.width = ball.style.height = (sz.v * 2.5) + 'px';
+    b.appendChild(ball);
+    b.onclick = () => { el.querySelectorAll('.pen-size').forEach(x => x.classList.remove('active')); b.classList.add('active'); onPick(sz.v); };
+    el.appendChild(b);
+  });
+}
+
+/* ---- sidebar rendering ---- */
+function renderFolders() {
+  const el = $('folders'); el.innerHTML = '';
+  S.folders.forEach(f => {
+    const count = S.notes.filter(n => n.folderId === f.id).length;
+    const d = document.createElement('div');
+    d.className = 'folder' + (S.curFolder?.id === f.id ? ' active' : '');
+    d.innerHTML = `<span class="dot"></span><span>${escapeHtml(f.name)}</span><span class="count">${count}</span>`;
+    d.onclick = () => { S.curFolder = f; renderFolders(); renderNotes(); };
+    el.appendChild(d);
+  });
+}
+function renderNotes() {
+  const el = $('notesList'); el.innerHTML = '';
+  let list = S.notes.filter(n => !S.curFolder || n.folderId === S.curFolder.id);
+  if (S.search) list = list.filter(n => n.title.toLowerCase().includes(S.search.toLowerCase()));
+  if (!list.length) { el.innerHTML = `<div class="empty-hint">${S.search ? '該当するノートがありません' : 'このフォルダーにはまだノートがありません。'}</div>`; return; }
+  list.sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  list.forEach(n => {
+    const d = document.createElement('div');
+    d.className = 'note-card' + (S.curNote?.id === n.id ? ' active' : '');
+    const date = new Date(n.updatedAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+    const mic = n.audio ? '<span class="mic">● 録音</span>' : '';
+    d.innerHTML = `<div class="title">${escapeHtml(n.title)}</div><div class="meta"><span>${date}</span><span class="pages">${n.pages.length}ページ</span>${mic}</div>`;
+    d.onclick = () => openNote(n);
+    el.appendChild(d);
+  });
+}
+
+/* ---- canvas base ---- */
+function setupCanvas() {
+  canvas.width = PAGE_W; canvas.height = PAGE_H;
+  const stageW = $('stage').clientWidth - 56;
+  const fit = Math.min(1, stageW / PAGE_W);
+  const scale = fit * S.zoom;
+  canvas.style.width = (PAGE_W * scale) + 'px';
+  canvas.style.height = (PAGE_H * scale) + 'px';
+}
+function paperColor() { return S.curNote?.pages[S.curPage]?.bg || '#fbfaf7'; }
+function isDarkPaper() { return paperColor() === '#1f2733'; }
+
+function drawBackground(c, w, h, bg) {
+  c.fillStyle = bg; c.fillRect(0, 0, w, h);
+  c.strokeStyle = bg === '#1f2733' ? 'rgba(255,255,255,0.08)' : '#ece8de';
+  c.lineWidth = 1;
+  const step = 44 * (h / PAGE_H);
+  for (let y = 80 * (h/PAGE_H); y < h; y += step) { c.beginPath(); c.moveTo(40, y); c.lineTo(w - 40, y); c.stroke(); }
+}
+
+function paintStrokes(c, strokes, sx=1, sy=1, ox=0, oy=0) {
+  strokes.forEach(st => {
+    if (st.type === 'highlight') {
+      c.strokeStyle = HIGHLIGHT; c.lineWidth = 24 * sx;
+    } else {
+      c.strokeStyle = st.color; c.lineWidth = st.size * sx;
+    }
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    c.beginPath();
+    st.points.forEach((p, i) => {
+      const x = (p.x - ox) * sx, y = (p.y - oy) * sy;
+      i === 0 ? c.moveTo(x, y) : c.lineTo(x, y);
+    });
+    c.stroke();
+  });
+}
+
+function paintImages(c, images, sx=1, sy=1, ox=0, oy=0, cb) {
+  if (!images || !images.length) { cb && cb(); return; }
+  let loaded = 0;
+  images.forEach(im => {
+    const draw = (bmp) => {
+      c.drawImage(bmp, (im.x - ox) * sx, (im.y - oy) * sy, im.w * sx, im.h * sy);
+      if (++loaded === images.length) cb && cb();
+    };
+    if (imgCache[im.id]) { draw(imgCache[im.id]); }
+    else { const img = new Image(); img.onload = () => { imgCache[im.id] = img; draw(img); }; img.src = im.data; }
+  });
+}
+
+function redraw() {
+  const page = S.curNote?.pages[S.curPage];
+  if (!page) return;
+  const bg = page.bg || '#fbfaf7';
+  drawBackground(ctx, PAGE_W, PAGE_H, bg);
+  paintImages(ctx, page.images, 1, 1, 0, 0, () => {
+    paintStrokes(ctx, page.strokes.filter(s => s.type === 'highlight'), 1,1,0,0);
+    paintStrokes(ctx, page.strokes.filter(s => s.type !== 'highlight'), 1,1,0,0);
+  });
+}
+
+/* ---- drawing on main canvas ---- */
+let drawing = false, curStroke = null, erasing = false;
+function pos(e, cv) {
+  const r = cv.getBoundingClientRect();
+  const sx = cv.width / r.width, sy = cv.height / r.height;
+  const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  const cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+  return { x: cx * sx, y: cy * sy };
+}
+function dist2seg(px, py, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const l2 = dx*dx + dy*dy;
+  let t = l2 ? ((px-a.x)*dx + (py-a.y)*dy) / l2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a.x + t*dx, cy = a.y + t*dy;
+  return Math.hypot(px-cx, py-cy);
+}
+function eraseAt(page, x, y, radius) {
+  let changed = false;
+  for (let i = page.strokes.length - 1; i >= 0; i--) {
+    const st = page.strokes[i], pts = st.points;
+    for (let j = 0; j < pts.length - 1; j++) {
+      if (dist2seg(x, y, pts[j], pts[j+1]) < radius) { page.strokes.splice(i, 1); changed = true; break; }
+    }
+    if (pts.length === 1 && Math.hypot(pts[0].x - x, pts[0].y - y) < radius) { page.strokes.splice(i, 1); changed = true; }
+  }
+  return changed;
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (!S.curNote) return;
+  const page = S.curNote.pages[S.curPage];
+  if (selecting) { startSelect(e); return; }
+  e.preventDefault();
+  if (S.mode === 'eraser') { erasing = true; if (eraseAt(page, ...Object.values(pos(e, canvas)), 18)) redraw(); return; }
+  drawing = true;
+  const p = pos(e, canvas);
+  curStroke = S.mode === 'highlight'
+    ? { type: 'highlight', points: [p] }
+    : { color: S.color, size: S.size * 2, points: [p] };
+  page.strokes.push(curStroke);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!S.curNote) return;
+  if (selecting && selDragging) { moveSelect(e); return; }
+  const page = S.curNote.pages[S.curPage];
+  if (erasing) { e.preventDefault(); if (eraseAt(page, ...Object.values(pos(e, canvas)), 18)) redraw(); return; }
+  if (!drawing) return;
+  e.preventDefault();
+  const p = pos(e, canvas);
+  curStroke.points.push(p);
+  redrawLastSegment(ctx, curStroke);
+});
+function redrawLastSegment(c, st) {
+  const pts = st.points, n = pts.length; if (n < 2) return;
+  c.strokeStyle = st.type === 'highlight' ? HIGHLIGHT : st.color;
+  c.lineWidth = st.type === 'highlight' ? 24 : st.size;
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  c.beginPath(); c.moveTo(pts[n-2].x, pts[n-2].y); c.lineTo(pts[n-1].x, pts[n-1].y); c.stroke();
+}
+function endDraw() {
+  if (selecting && selDragging) { finishSelect(); return; }
+  if (drawing || erasing) { drawing = false; erasing = false; curStroke = null; if (S.mode==='highlight') redraw(); saveNote(); }
+}
+canvas.addEventListener('pointerup', endDraw);
+canvas.addEventListener('pointerleave', endDraw);
+
+/* ---- focus zoom (rectangle select then enlarge) ---- */
+let selecting = false, selDragging = false, selStart = null, selBox = null;
+$('focusBtn').onclick = () => {
+  if (!S.curNote) return;
+  selecting = !selecting;
+  $('focusBtn').classList.toggle('active', selecting);
+  $('sheet').classList.toggle('select-mode', selecting);
+  toast(selecting ? '拡大したい範囲をドラッグで囲んでください' : '');
+};
+function startSelect(e) {
+  e.preventDefault(); selDragging = true;
+  selStart = pos(e, canvas);
+  const rect = $('selRect'); rect.style.display = 'block';
+}
+function moveSelect(e) {
+  e.preventDefault();
+  const p = pos(e, canvas);
+  const x = Math.min(selStart.x, p.x), y = Math.min(selStart.y, p.y);
+  const w = Math.abs(p.x - selStart.x), h = Math.abs(p.y - selStart.y);
+  selBox = { x, y, w, h };
+  const cv = canvas.getBoundingClientRect(), sheet = $('sheet').getBoundingClientRect();
+  const scale = cv.width / canvas.width;
+  const rect = $('selRect');
+  rect.style.left = (cv.left - sheet.left + x*scale) + 'px';
+  rect.style.top = (cv.top - sheet.top + y*scale) + 'px';
+  rect.style.width = (w*scale) + 'px';
+  rect.style.height = (h*scale) + 'px';
+}
+function finishSelect() {
+  selDragging = false;
+  $('selRect').style.display = 'none';
+  if (selBox && selBox.w > 30 && selBox.h > 30) openZoomDraw(selBox);
+  selecting = false; $('focusBtn').classList.remove('active'); $('sheet').classList.remove('select-mode');
+}
+
+/* Zoom draw overlay */
+const zc = $('zoomCanvas'), zctx = zc.getContext('2d');
+let zoomBox = null, zoomStrokes = [], zoomState = { color: '#1a2332', size: 2.5, eraser: false };
+let zDrawing = false, zCur = null, zErasing = false;
+
+function openZoomDraw(box) {
+  zoomBox = box; zoomStrokes = [];
+  const vh = window.innerHeight - 140, vw = window.innerWidth - 60;
+  const ar = box.w / box.h;
+  let cw = vw, ch = cw / ar;
+  if (ch > vh) { ch = vh; cw = ch * ar; }
+  zc.width = box.w * 2; zc.height = box.h * 2;
+  zc.style.width = cw + 'px'; zc.style.height = ch + 'px';
+  renderZoom();
+  $('zoomOverlay').classList.add('show');
+}
+function renderZoom() {
+  const page = S.curNote.pages[S.curPage];
+  const bg = page.bg || '#fbfaf7';
+  const sx = zc.width / zoomBox.w, sy = zc.height / zoomBox.h;
+  drawBackground(zctx, zc.width, zc.height, bg);
+  paintImages(zctx, page.images, sx, sy, zoomBox.x, zoomBox.y, () => {
+    paintStrokes(zctx, page.strokes.filter(s=>s.type==='highlight'), sx, sy, zoomBox.x, zoomBox.y);
+    paintStrokes(zctx, page.strokes.filter(s=>s.type!=='highlight'), sx, sy, zoomBox.x, zoomBox.y);
+    paintStrokes(zctx, zoomStrokes.filter(s=>s.type==='highlight'), sx, sy, zoomBox.x, zoomBox.y);
+    paintStrokes(zctx, zoomStrokes.filter(s=>s.type!=='highlight'), sx, sy, zoomBox.x, zoomBox.y);
+  });
+}
+buildColors('zoomColors', c => zoomState.color = c);
+buildSizes('zoomSizes', v => zoomState.size = v);
+$('zoomEraser').onclick = () => { zoomState.eraser = !zoomState.eraser; $('zoomEraser').classList.toggle('active', zoomState.eraser); };
+$('zoomUndo').onclick = () => { if (zoomStrokes.length) { zoomStrokes.pop(); renderZoom(); } };
+
+zc.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const sx = zc.width / zoomBox.w, sy = zc.height / zoomBox.h;
+  const p = pos(e, zc);
+  const px = p.x / sx + zoomBox.x, py = p.y / sy + zoomBox.y;
+  if (zoomState.eraser) { zErasing = true; eraseZoom(px, py); return; }
+  zDrawing = true;
+  zCur = { color: zoomState.color, size: zoomState.size * 2, points: [{ x: px, y: py }] };
+  zoomStrokes.push(zCur);
+});
+zc.addEventListener('pointermove', e => {
+  if (zErasing) { const sx=zc.width/zoomBox.w, sy=zc.height/zoomBox.h; const p=pos(e,zc); eraseZoom(p.x/sx+zoomBox.x, p.y/sy+zoomBox.y); return; }
+  if (!zDrawing) return; e.preventDefault();
+  const sx = zc.width / zoomBox.w, sy = zc.height / zoomBox.h;
+  const p = pos(e, zc);
+  zCur.points.push({ x: p.x / sx + zoomBox.x, y: p.y / sy + zoomBox.y });
+  renderZoom();
+});
+function eraseZoom(px, py) {
+  for (let i = zoomStrokes.length-1; i>=0; i--) {
+    const pts = zoomStrokes[i].points;
+    for (let j=0;j<pts.length-1;j++) if (dist2seg(px,py,pts[j],pts[j+1]) < 12) { zoomStrokes.splice(i,1); renderZoom(); return; }
+  }
+}
+function zEnd() { zDrawing = false; zErasing = false; zCur = null; }
+zc.addEventListener('pointerup', zEnd);
+zc.addEventListener('pointerleave', zEnd);
+
+$('zoomCancel').onclick = () => $('zoomOverlay').classList.remove('show');
+$('zoomDone').onclick = () => {
+  const page = S.curNote.pages[S.curPage];
+  zoomStrokes.forEach(s => page.strokes.push(s));
+  $('zoomOverlay').classList.remove('show');
+  redraw(); saveNote();
+  toast('拡大範囲の手書きを反映しました');
+};
+
+/* ---- overall zoom (page-level) ---- */
+function applyZoom() { setupCanvas(); redraw(); $('zoomReadout').textContent = Math.round(S.zoom*100) + '%'; }
+$('zoomIn').onclick = () => { S.zoom = Math.min(3, S.zoom + 0.25); applyZoom(); };
+$('zoomOut').onclick = () => { S.zoom = Math.max(0.5, S.zoom - 0.25); applyZoom(); };
+$('zoomReset').onclick = () => { S.zoom = 1; applyZoom(); };
+
+/* ---- note ops ---- */
+async function openNote(n) {
+  S.curNote = n; S.curPage = 0; S.zoom = 1;
+  $('noNote').style.display = 'none';
+  $('sheet').style.display = 'block';
+  $('pagebar').style.display = 'flex';
+  setupCanvas(); redraw(); updatePageInfo(); renderNotes(); renderAudio();
+  $('zoomReadout').textContent = '100%';
+}
+function updatePageInfo() {
+  if (!S.curNote) return;
+  $('pageInfo').textContent = `${S.curPage+1} / ${S.curNote.pages.length}`;
+  $('prevPage').disabled = S.curPage === 0;
+  $('nextPage').disabled = S.curPage === S.curNote.pages.length - 1;
+  $('delPage').disabled = S.curNote.pages.length <= 1;
+}
+async function saveNote() {
+  if (!S.curNote) return;
+  S.curNote.updatedAt = new Date().toISOString();
+  await dbPut('notes', S.curNote);
+  renderNotes();
+}
+async function createNote() {
+  if (!S.curFolder) { toast('先にフォルダーを選択してください'); return; }
+  const n = { id: 'n'+Date.now(), folderId: S.curFolder.id,
+    title: 'ノート ' + (S.notes.filter(x=>x.folderId===S.curFolder.id).length+1),
+    pages: [{ strokes: [], images: [], bg: '#fbfaf7' }],
+    audio: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  S.notes.push(n); await dbPut('notes', n); renderFolders(); openNote(n);
+  toast('新しいノートを作成しました');
+}
+async function createFolder() {
+  const name = prompt('フォルダー名を入力'); if (!name) return;
+  const f = { id: 'f'+Date.now(), name, createdAt: new Date().toISOString() };
+  S.folders.push(f); await dbPut('folders', f); S.curFolder = f; renderFolders(); renderNotes();
+}
+
+/* ---- toolbar ---- */
+buildColors('colors', c => { S.color = c; S.mode = 'pen'; $('eraserBtn').classList.remove('active'); $('highlightBtn').classList.remove('active'); });
+buildSizes('penSizes', v => S.size = v);
+$('newNoteBtn').onclick = createNote;
+$('addFolderBtn').onclick = createFolder;
+$('toggleSidebar').onclick = () => $('sidebar').classList.toggle('collapsed');
+$('eraserBtn').onclick = () => { S.mode = S.mode==='eraser'?'pen':'eraser'; $('eraserBtn').classList.toggle('active', S.mode==='eraser'); $('highlightBtn').classList.remove('active'); };
+$('highlightBtn').onclick = () => { S.mode = S.mode==='highlight'?'pen':'highlight'; $('highlightBtn').classList.toggle('active', S.mode==='highlight'); $('eraserBtn').classList.remove('active'); };
+$('undoBtn').onclick = () => { const p = S.curNote?.pages[S.curPage]; if (p?.strokes.length) { p.strokes.pop(); redraw(); saveNote(); } };
+$('deleteNoteBtn').onclick = async () => {
+  if (!S.curNote || !confirm('このノートを削除しますか？')) return;
+  await dbDel('notes', S.curNote.id);
+  S.notes = S.notes.filter(x => x.id !== S.curNote.id); S.curNote = null;
+  $('noNote').style.display = 'flex'; $('sheet').style.display = 'none'; $('pagebar').style.display = 'none';
+  $('audioBar').classList.remove('show');
+  renderFolders(); renderNotes(); toast('ノートを削除しました');
+};
+$('prevPage').onclick = () => { if (S.curPage>0){ S.curPage--; redraw(); updatePageInfo(); } };
+$('nextPage').onclick = () => { if (S.curPage<S.curNote.pages.length-1){ S.curPage++; redraw(); updatePageInfo(); } };
+$('addPage').onclick = async () => { S.curNote.pages.push({ strokes:[], images:[], bg:'#fbfaf7' }); S.curPage = S.curNote.pages.length-1; redraw(); updatePageInfo(); await saveNote(); toast('ページを追加'); };
+$('delPage').onclick = async () => { if (S.curNote.pages.length<=1) return; if (!confirm('このページを削除しますか？')) return; S.curNote.pages.splice(S.curPage,1); if (S.curPage>=S.curNote.pages.length) S.curPage=S.curNote.pages.length-1; redraw(); updatePageInfo(); await saveNote(); };
+$('searchInput').oninput = e => { S.search = e.target.value; renderNotes(); };
+
+/* ---- background color ---- */
+$('bgBtn').onclick = () => {
+  if (!S.curNote) return;
+  const el = $('bgSwatches'); el.innerHTML = '';
+  const cur = paperColor();
+  PAPER_COLORS.forEach(col => {
+    const s = document.createElement('div');
+    s.className = 'bg-swatch' + (col === cur ? ' active' : '');
+    s.style.background = col;
+    s.onclick = () => { S.curNote.pages[S.curPage].bg = col; redraw(); saveNote(); el.querySelectorAll('.bg-swatch').forEach(x=>x.classList.remove('active')); s.classList.add('active'); };
+    el.appendChild(s);
+  });
+  $('bgModal').classList.add('show');
+};
+$('bgCloseBtn').onclick = () => $('bgModal').classList.remove('show');
+$('bgModal').onclick = e => { if (e.target === $('bgModal')) $('bgModal').classList.remove('show'); };
+
+/* ---- image insert ---- */
+$('imgBtn').onclick = () => { if (S.curNote) $('imgInput').click(); };
+$('imgInput').onchange = e => {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 480, ratio = img.width / img.height;
+      let w = Math.min(maxW, img.width), h = w / ratio;
+      const page = S.curNote.pages[S.curPage];
+      if (!page.images) page.images = [];
+      const id = 'img'+Date.now();
+      page.images.push({ id, data: reader.result, x: (PAGE_W-w)/2, y: 120, w, h });
+      imgCache[id] = img;
+      redraw(); saveNote(); toast('画像を挿入しました（中央に配置）');
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+};
+
+/* ---- audio recording ---- */
+let mediaRecorder = null, audioChunks = [], recording = false;
+$('recBtn').onclick = async () => {
+  if (!S.curNote) return;
+  if (recording) { mediaRecorder.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      const reader = new FileReader();
+      reader.onload = async () => { S.curNote.audio = reader.result; await saveNote(); renderAudio(); toast('録音を保存しました'); };
+      reader.readAsDataURL(blob);
+      recording = false; $('recBtn').classList.remove('rec-active'); $('recBtn').lastChild.textContent = '録音';
+    };
+    mediaRecorder.start(); recording = true;
+    $('recBtn').classList.add('rec-active'); $('recBtn').lastChild.textContent = '停止';
+    toast('録音を開始しました');
+  } catch (err) { toast('マイクにアクセスできませんでした'); }
+};
+function renderAudio() {
+  const bar = $('audioBar');
+  if (S.curNote?.audio) {
+    bar.classList.add('show');
+    bar.innerHTML = '<span>録音メモ</span>';
+    const audio = document.createElement('audio'); audio.controls = true; audio.src = S.curNote.audio;
+    bar.appendChild(audio);
+    const dl = document.createElement('button'); dl.className = 'tool-btn'; dl.textContent = '書き出し';
+    dl.onclick = () => { const a = document.createElement('a'); a.href = S.curNote.audio; a.download = `${S.curNote.title}.webm`; a.click(); };
+    bar.appendChild(dl);
+    const del = document.createElement('button'); del.className = 'tool-btn danger'; del.textContent = '削除';
+    del.onclick = async () => { if (confirm('録音を削除しますか？')) { S.curNote.audio = null; await saveNote(); renderAudio(); renderNotes(); } };
+    bar.appendChild(del);
+  } else { bar.classList.remove('show'); bar.innerHTML = ''; }
+}
+
+/* ---- export ---- */
+$('exportBtn').onclick = () => { if (S.curNote) $('exportModal').classList.add('show'); };
+$('exportModal').onclick = e => { if (e.target === $('exportModal')) $('exportModal').classList.remove('show'); };
+function renderPageTo(c, w, h, page, transparent) {
+  return new Promise(res => {
+    if (!transparent) drawBackground(c, w, h, page.bg || '#fbfaf7');
+    else c.clearRect(0,0,w,h);
+    const sx = w/PAGE_W, sy = h/PAGE_H;
+    paintImages(c, page.images, sx, sy, 0, 0, () => {
+      paintStrokes(c, page.strokes.filter(s=>s.type==='highlight'), sx, sy);
+      paintStrokes(c, page.strokes.filter(s=>s.type!=='highlight'), sx, sy);
+      res();
+    });
+  });
+}
+$('exportImgBtn').onclick = async () => {
+  const transparent = document.querySelector('input[name=expbg]:checked').value === 'transparent';
+  const tmp = document.createElement('canvas'); tmp.width = PAGE_W; tmp.height = PAGE_H;
+  await renderPageTo(tmp.getContext('2d'), PAGE_W, PAGE_H, S.curNote.pages[S.curPage], transparent);
+  const a = document.createElement('a'); a.href = tmp.toDataURL('image/png'); a.download = `${S.curNote.title}_p${S.curPage+1}.png`; a.click();
+  $('exportModal').classList.remove('show'); toast('画像を書き出しました');
+};
+$('exportPdfBtn').onclick = async () => {
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [PAGE_W, PAGE_H] });
+  for (let i = 0; i < S.curNote.pages.length; i++) {
+    const tmp = document.createElement('canvas'); tmp.width = PAGE_W; tmp.height = PAGE_H;
+    await renderPageTo(tmp.getContext('2d'), PAGE_W, PAGE_H, S.curNote.pages[i], false);
+    if (i > 0) pdf.addPage([PAGE_W, PAGE_H], 'portrait');
+    pdf.addImage(tmp.toDataURL('image/png'), 'PNG', 0, 0, PAGE_W, PAGE_H);
+  }
+  pdf.save(`${S.curNote.title}.pdf`);
+  $('exportModal').classList.remove('show'); toast('PDFを書き出しました');
+};
+
+/* ---- OCR ---- */
+$('ocrBtn').onclick = () => { if (!S.curNote) return; $('ocrResult').textContent = '「認識開始」を押してください。'; $('ocrModal').classList.add('show'); };
+$('ocrCloseBtn').onclick = () => $('ocrModal').classList.remove('show');
+$('ocrModal').onclick = e => { if (e.target === $('ocrModal')) $('ocrModal').classList.remove('show'); };
+$('ocrRunBtn').onclick = async () => {
+  const tmp = document.createElement('canvas'); tmp.width = PAGE_W; tmp.height = PAGE_H;
+  await renderPageTo(tmp.getContext('2d'), PAGE_W, PAGE_H, S.curNote.pages[S.curPage], false);
+  $('ocrResult').innerHTML = '<span class="spinner"></span> 認識中… (初回はモデル読み込みに時間がかかります)';
+  try { const { data } = await Tesseract.recognize(tmp, 'jpn+eng'); $('ocrResult').textContent = data.text.trim() || '（文字を認識できませんでした）'; }
+  catch (err) { $('ocrResult').textContent = '認識に失敗しました: ' + err.message; }
+};
+$('ocrCopyBtn').onclick = () => navigator.clipboard.writeText($('ocrResult').textContent).then(() => toast('コピーしました'));
+
+window.addEventListener('resize', () => { if (S.curNote) { setupCanvas(); redraw(); } });
+
+/* ---- boot ---- */
+(async () => {
+  await openDB();
+  S.folders = await dbAll('folders');
+  S.notes = await dbAll('notes');
+  if (!S.folders.length) {
+    for (const name of ['仕事', '学習', 'アイデア']) {
+      const f = { id: 'f'+Date.now()+Math.random().toString(36).slice(2,5), name, createdAt: new Date().toISOString() };
+      S.folders.push(f); await dbPut('folders', f);
+    }
+  }
+  S.curFolder = S.folders[0];
+  renderFolders(); renderNotes();
+})();
+</script>
+</body>
+</html>
